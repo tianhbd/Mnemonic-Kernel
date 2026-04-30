@@ -255,6 +255,175 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
 - `journal-extract.ps1` 是唯一允许自动写入 memory 的路径。
 - 发布前运行 `scripts/check.ps1`。
 
+## OpenCode 示例部署
+
+本仓库是 `OpenCode` 这类 Agent host 的治理层，不是 host 本体。
+
+### 前提
+
+- 已安装 `git`
+- 已安装 `PowerShell`
+- 已安装并可直接执行 `opencode`
+- `OpenCode` 自身的模型和 provider 已可正常工作
+
+本仓库不负责安装 `OpenCode`、配置 API key、配置 provider。
+
+### 1. 克隆仓库
+
+```powershell
+git clone https://github.com/tianhbd/Mnemonic-Kernel.git
+cd Mnemonic-Kernel
+```
+
+如果是接入已有 OpenCode 工作区，把仓库放在工作区根目录，保证 `AGENTS.md` 能被直接读取。
+
+### 2. 先做自检
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+预期输出：
+
+```text
+Mnemonic Kernel check passed.
+```
+
+### 3. 首次启动前先跑 memory boot
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-boot.ps1
+```
+
+作用：
+
+- 校验 `memory/index/` 指针
+- 清理无效指针
+- 重建 `default / current-week / month / year / cold / master`
+
+启动后默认入口应是：
+
+```text
+memory/index/default.md
+```
+
+不是直接读取：
+
+```text
+memory/entries/
+memory/
+```
+
+### 4. 在仓库根目录启动 OpenCode
+
+```powershell
+opencode
+```
+
+或：
+
+```powershell
+opencode run "read AGENTS.md and answer in Chinese"
+```
+
+默认加载边界应是：
+
+- 读 `AGENTS.md`
+- 读 `memory/index/default.md`
+- 读 `skills/skills.md`
+- 不默认读 `memory/entries/`
+- 不默认读 `journal/`
+
+### 5. 每轮结束后写 journal buffer
+
+`journal` 不会自动运行，host 需要在每轮完成后调用：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-append.ps1 `
+  -UserText "<user text>" `
+  -AssistantSummary "<assistant summary>" `
+  -Actions "<action 1>","<action 2>"
+```
+
+该脚本只记录：
+
+- 当前用户输入
+- 助手摘要
+- 关键动作和结果
+- 脱敏后的内容
+
+### 6. 达到阈值后提炼 journal
+
+当 `turn_count >= max_turns` 时调用：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-extract.ps1
+```
+
+测试时可强制提炼：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-extract.ps1 -Force
+```
+
+该脚本会：
+
+- 读取 `journal/buffer/current.md`
+- 判断是否有 durable memory 价值
+- 有价值则写入 `memory/entries/YYYY-MM-DD/*.md`
+- 无价值则写入 `journal/discarded/*.md`
+- 调用 `scripts/memory-index.ps1`
+- 重置当前 buffer
+
+这是本仓库唯一允许自动写入 durable memory 的路径。
+
+### 7. Memory 检索必须按索引链路
+
+检索顺序应是：
+
+```text
+memory/index/default.md
+memory/index/current-week.md
+recent month indexes
+year indexes
+memory/index/cold.md
+```
+
+只有命中索引后，才去读对应的 `memory/entries/*.md`。
+
+### 8. 推荐接线方式
+
+```text
+OpenCode host
+  -> start in repo root
+  -> read AGENTS.md
+  -> run memory-boot.ps1 before session or workspace activation
+  -> load memory/index/default.md and skills/skills.md
+  -> append one journal turn after each completed interaction
+  -> run journal-extract.ps1 when threshold is reached
+```
+
+如果 OpenCode 支持 hook，就把这些脚本挂到 hook。
+如果不支持，就在外层包一层启动脚本。
+
+### 9. 日常运维命令
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-boot.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-search.ps1 -Query "user preference"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-extract.ps1 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-clean.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+### 10. 本仓库不负责的事情
+
+- 安装 `OpenCode`
+- 配置模型 provider
+- 保存 API key / token
+- 在没有 host 接线时自动拦截每轮对话
+- 替代你的 agent runtime
+
 ## English
 
 # Mnemonic Kernel
@@ -291,6 +460,208 @@ There are 3 main runtime paths:
    The agent reads `memory/index/default.md` first and loads entry bodies only after an index hit.
 3. Extraction path
    Each completed turn is appended into `journal/buffer`, and once the threshold is reached, `journal-extract.ps1` decides whether the batch should become durable memory.
+
+## OpenCode Installation and Deployment Example
+
+This repository is a governance layer for an agent host. It does not replace the host itself.
+
+Below is the practical deployment model when the host is `OpenCode`.
+
+### 1. Preconditions
+
+You need:
+
+- `git`
+- `PowerShell 7+` or Windows PowerShell
+- `OpenCode` installed and available from the terminal
+- a working model/provider configuration in OpenCode itself
+
+This repository assumes OpenCode can already start normally. It does not configure providers, API keys, or model routing for you.
+
+### 2. Clone the Repository
+
+```powershell
+git clone https://github.com/tianhbd/Mnemonic-Kernel.git
+cd Mnemonic-Kernel
+```
+
+If you are embedding this into an existing agent workspace, keep the directory name stable and place the repository at the workspace root where OpenCode will read `AGENTS.md`.
+
+### 3. Verify the Repository Structure
+
+Run the built-in check first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+Expected result:
+
+```text
+Mnemonic Kernel check passed.
+```
+
+Do not continue deployment before this passes.
+
+### 4. Boot Memory Indexes Before the First Session
+
+OpenCode should not read raw memory bodies at startup. It should boot indexes first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-boot.ps1
+```
+
+What this does:
+
+- validates every pointer under `memory/index/`
+- removes invalid pointers
+- rebuilds `default / current-week / month / year / cold / master`
+- leaves the repository ready for index-only loading
+
+After this step, the default memory entrypoint is:
+
+```text
+memory/index/default.md
+```
+
+Not:
+
+```text
+memory/entries/
+memory/
+```
+
+### 5. Start OpenCode in This Repository
+
+Start OpenCode from the repository root:
+
+```powershell
+opencode
+```
+
+Or, if you prefer one-shot execution:
+
+```powershell
+opencode run "read AGENTS.md and answer in Chinese"
+```
+
+When OpenCode starts in this directory, the intended loading boundary is:
+
+- read `AGENTS.md`
+- read `memory/index/default.md`
+- read `skills/skills.md`
+- do not read `memory/entries/` by default
+- do not read `journal/` by default
+
+This is the core deployment constraint. If your host or wrapper loads the full `memory/` tree up front, it is violating the repository design.
+
+### 6. Wire Journal Append at the End of Each Turn
+
+`journal` is not self-running. The host must call the append script after each completed interaction turn.
+
+Minimum call shape:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-append.ps1 `
+  -UserText "<user text>" `
+  -AssistantSummary "<assistant summary>" `
+  -Actions "<action 1>","<action 2>"
+```
+
+This writes only:
+
+- current user input
+- assistant summary
+- key actions/results
+- redacted content when obvious secrets are detected
+
+It does not store the full raw runtime context unless your host passes it in.
+
+### 7. Trigger Journal Extraction at Threshold
+
+When `turn_count >= max_turns`, the host should call:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-extract.ps1
+```
+
+Or force an early extraction during testing:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-extract.ps1 -Force
+```
+
+What extraction does:
+
+- reads `journal/buffer/current.md`
+- decides whether durable memory exists
+- writes `journal/extracted/*.md` or `journal/discarded/*.md`
+- creates `memory/entries/YYYY-MM-DD/*.md` only when durable value exists
+- runs `scripts/memory-index.ps1`
+- resets the active journal buffer
+
+This is the only automatic durable-memory write path in the repository.
+
+### 8. Query Memory the Intended Way
+
+If you build an OpenCode wrapper, memory lookup should follow the same order as `AGENTS.md`:
+
+```text
+memory/index/default.md
+memory/index/current-week.md
+recent month indexes
+year indexes
+memory/index/cold.md
+```
+
+Only after an index hit should OpenCode or the wrapper read the referenced file under `memory/entries/`.
+
+Do not use full-directory grep as the default retrieval path.
+
+### 9. Recommended Host Integration Model
+
+In practice, OpenCode deployment usually looks like this:
+
+```text
+OpenCode host
+  -> starts in repo root
+  -> reads AGENTS.md
+  -> runs memory-boot.ps1 before session or on workspace activation
+  -> loads memory/index/default.md and skills/skills.md
+  -> appends one journal turn after each completed interaction
+  -> triggers journal-extract.ps1 when threshold is reached
+```
+
+If your OpenCode environment supports session hooks, attach the scripts there.
+If it does not, wrap `opencode` with a thin launcher script that:
+
+1. runs `memory-boot.ps1`
+2. starts OpenCode
+3. appends journal entries after each turn if your host exposes turn callbacks
+
+### 10. Operational Commands
+
+For daily deployment and maintenance:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-boot.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-search.ps1 -Query "user preference"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-extract.ps1 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\journal-clean.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+### 11. What This Repository Does Not Do
+
+This repository does not:
+
+- install OpenCode itself
+- provision model providers
+- store API keys or tokens
+- automatically intercept OpenCode turns without host integration
+- replace your agent runtime
+
+It gives OpenCode a controlled memory/journal/skill governance surface. The host still has to execute the hooks.
 
 ## Recommended Layout
 
