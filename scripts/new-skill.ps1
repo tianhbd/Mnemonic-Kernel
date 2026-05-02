@@ -4,17 +4,30 @@ param(
     [Parameter(Mandatory = $true)][string]$Trigger,
     [Parameter(Mandatory = $true)][string]$Workflow,
     [Parameter(Mandatory = $true)][string]$Verification,
+    [string]$Slug = "",
+    [string]$Category = "general",
+    [string[]]$Triggers = @(),
+    [string[]]$Toolsets = @("terminal"),
+    [string]$PromotedFromMemoryId = "",
+    [string]$PromotedFromMemoryPath = "",
+    [int]$PromotedFromMemoryHitCount = 0,
+    [string]$PromotedAt = "",
     [switch]$Confirmed,
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "memory-skill-utils.ps1")
 
 if (-not $Confirmed) {
     throw "Refusing to create skill without explicit -Confirmed."
 }
 
-$slug = ($Name.ToLowerInvariant() -replace "[^a-z0-9\-]+", "-").Trim("-")
+$slug = if ([string]::IsNullOrWhiteSpace($Slug)) {
+    Get-AsciiSlug -Candidates @($Name, $Trigger) -FallbackPrefix "skill"
+} else {
+    (($Slug.ToLowerInvariant() -replace "[^a-z0-9\-]+", "-").Trim("-"))
+}
 if ([string]::IsNullOrWhiteSpace($slug)) {
     throw "Name must contain at least one ASCII letter or number."
 }
@@ -32,11 +45,49 @@ if ($indexContent -match [regex]::Escape($Name) -or $indexContent -match [regex]
     throw "Possible duplicate skill index entry: $Name"
 }
 
+if ($Triggers.Count -eq 0) {
+    $Triggers = @($Trigger)
+}
+$Triggers = @($Triggers | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+if ($Triggers.Count -eq 0) {
+    throw "At least one trigger is required."
+}
+
+$Toolsets = @($Toolsets | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+if ($Toolsets.Count -eq 0) {
+    $Toolsets = @("terminal")
+}
+
+$triggerBlock = ($Triggers | ForEach-Object { "  - $_" }) -join "`n"
+$toolsetBlock = ($Toolsets | ForEach-Object { "  - $_" }) -join "`n"
+$promotedBlock = ""
+if (-not [string]::IsNullOrWhiteSpace($PromotedFromMemoryId)) {
+    if ([string]::IsNullOrWhiteSpace($PromotedFromMemoryPath)) {
+        throw "PromotedFromMemoryPath is required when PromotedFromMemoryId is set."
+    }
+    if ([string]::IsNullOrWhiteSpace($PromotedAt)) {
+        $PromotedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm")
+    }
+    $promotedBlock = @"
+promoted_from_memory:
+  id: $PromotedFromMemoryId
+  path: $PromotedFromMemoryPath
+  hit_count: $PromotedFromMemoryHitCount
+  promoted_at: $PromotedAt
+"@
+}
+
 New-Item -ItemType Directory -Path $skillDir | Out-Null
 $body = @"
 ---
 name: $slug
 description: $Description
+category: $Category
+triggers:
+$triggerBlock
+toolsets:
+$toolsetBlock
+$promotedBlock
 ---
 
 # $Name
@@ -63,6 +114,6 @@ $Verification
 "@
 
 Set-Content -LiteralPath $target -Value $body -Encoding UTF8
-Add-Content -LiteralPath $index -Encoding UTF8 -Value "| $Name | ``skills/$slug/SKILL.md`` | $Trigger |"
+Add-Content -LiteralPath $index -Encoding UTF8 -Value "| $Name | ``skills/$slug/SKILL.md`` | $($Triggers -join '; ') |"
 
 Write-Host "Created skills/$slug/SKILL.md and updated skills/skills.md"

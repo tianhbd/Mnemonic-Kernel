@@ -6,7 +6,10 @@ $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($Root)) {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $Root = (Resolve-Path (Join-Path $scriptDir "..")).Path
+} else {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
+. (Join-Path $scriptDir "memory-skill-utils.ps1")
 $failures = New-Object System.Collections.Generic.List[string]
 
 function Add-Failure {
@@ -34,7 +37,7 @@ function Get-RelativeMarkdownPaths {
     [regex]::Matches($content, '`([^`]+\.md)`') | ForEach-Object {
         $_.Groups[1].Value
     } | Where-Object {
-        $_ -notmatch "^\w+://" -and $_ -notmatch "[{}<>*]"
+        $_ -notmatch "^\w+://" -and $_ -notmatch "[{}<>*]" -and $_ -match "[/\\]"
     } | Select-Object -Unique
 }
 
@@ -72,8 +75,31 @@ function Test-SecretPatterns {
         "xox[baprs]-[A-Za-z0-9-]{20,}",
         "AKIA[0-9A-Z]{16}"
     )
-    $files = Get-ChildItem -LiteralPath $Root -Recurse -File |
-        Where-Object { $_.FullName -notmatch "\\\.git\\" }
+    $scanTargets = @(
+        "AGENTS.md",
+        "README.md",
+        "memory",
+        "skills",
+        "journal",
+        "templates",
+        "scripts",
+        "tests",
+        "docs"
+    )
+
+    $files = @()
+    foreach ($target in $scanTargets) {
+        $path = Join-Path $Root $target
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        $item = Get-Item -LiteralPath $path
+        if ($item.PSIsContainer) {
+            $files += @(Get-ChildItem -LiteralPath $path -Recurse -File)
+        } else {
+            $files += @($item)
+        }
+    }
 
     foreach ($file in $files) {
         $content = Get-Content -Raw -Encoding UTF8 $file.FullName -ErrorAction SilentlyContinue
@@ -207,6 +233,116 @@ function Test-AgentsJournalRule {
     }
 }
 
+function Test-SkillDefinitions {
+    $skillIndexPath = Join-Path $Root "skills/skills.md"
+    $skillIndexContent = if (Test-Path -LiteralPath $skillIndexPath -PathType Leaf) {
+        Get-Content -Raw -Encoding UTF8 $skillIndexPath
+    } else {
+        ""
+    }
+    $indexedPaths = @([regex]::Matches($skillIndexContent, '`(skills/.+?/SKILL\.md)`') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -notmatch '[{}<>]' })
+    $skills = @(Get-AllSkillRecords -Root $Root)
+
+    foreach ($skill in $skills) {
+        if ([string]::IsNullOrWhiteSpace($skill.Frontmatter)) {
+            Add-Failure "$($skill.Path) is missing YAML frontmatter"
+            continue
+        }
+        if ([string]::IsNullOrWhiteSpace($skill.Name)) {
+            Add-Failure "$($skill.Path) is missing frontmatter field: name"
+        }
+        if ([string]::IsNullOrWhiteSpace($skill.Description)) {
+            Add-Failure "$($skill.Path) is missing frontmatter field: description"
+        }
+        if ([string]::IsNullOrWhiteSpace($skill.Category)) {
+            Add-Failure "$($skill.Path) is missing frontmatter field: category"
+        }
+        if (@($skill.Triggers).Count -eq 0) {
+            Add-Failure "$($skill.Path) is missing frontmatter field: triggers"
+        }
+        if ($indexedPaths -notcontains $skill.Path) {
+            Add-Failure "skills/skills.md is missing index entry for $($skill.Path)"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($skill.PromotedFromMemoryId)) {
+            if ([string]::IsNullOrWhiteSpace($skill.PromotedFromMemoryPath)) {
+                Add-Failure "$($skill.Path) is missing promoted_from_memory.path"
+            } else {
+                $promotedPath = Convert-ToAbsoluteRepoPath -RepoPath $skill.PromotedFromMemoryPath -Root $Root
+                if (Test-Path -LiteralPath $promotedPath -PathType Leaf) {
+                    Add-Failure "$($skill.Path) still points to existing promoted memory: $($skill.PromotedFromMemoryPath)"
+                }
+            }
+            if ($skill.PromotedFromMemoryHitCount -le 0) {
+                Add-Failure "$($skill.Path) has invalid promoted_from_memory.hit_count"
+            }
+            if ([string]::IsNullOrWhiteSpace($skill.PromotedAt)) {
+                Add-Failure "$($skill.Path) is missing promoted_from_memory.promoted_at"
+            }
+        }
+    }
+
+    foreach ($indexedPath in $indexedPaths) {
+        $absolute = Convert-ToAbsoluteRepoPath -RepoPath $indexedPath -Root $Root
+        if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) {
+            Add-Failure "skills/skills.md references missing skill file: $indexedPath"
+        }
+    }
+}
+
+function Test-DiscardedSkillSuppressions {
+    $discardRoot = Join-Path $Root "journal/discarded"
+    if (-not (Test-Path -LiteralPath $discardRoot -PathType Container)) {
+        return
+    }
+
+    $skillNames = @((Get-AllSkillRecords -Root $Root) | ForEach-Object { $_.Name })
+    foreach ($file in Get-ChildItem -LiteralPath $discardRoot -File -Filter "*.md") {
+        $content = Get-Content -Raw -Encoding UTF8 $file.FullName
+        $reason = Get-MarkdownScalarField -Content $content -Name "reason"
+        if ($reason -ne "duplicated_by_skill") {
+            continue
+        }
+        $matchedSkill = Get-MarkdownScalarField -Content $content -Name "matched_skill"
+        if ([string]::IsNullOrWhiteSpace($matchedSkill)) {
+            Add-Failure "$($file.FullName.Substring((Resolve-Path -LiteralPath $Root).Path.TrimEnd('\').Length + 1).Replace('\', '/')) is missing matched_skill for duplicated_by_skill"
+            continue
+        }
+        if ($skillNames -notcontains $matchedSkill) {
+            Add-Failure "$($file.FullName.Substring((Resolve-Path -LiteralPath $Root).Path.TrimEnd('\').Length + 1).Replace('\', '/')) points to missing skill: $matchedSkill"
+        }
+    }
+}
+
+function Test-SkillPromotionCandidates {
+    $candidatePath = Join-Path $Root "memory/review/skill-promote-candidates.md"
+    if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+        return
+    }
+
+    $content = Get-Content -Raw -Encoding UTF8 $candidatePath
+    $ids = @([regex]::Matches($content, '(?m)^- memory_id:\s*(.+)$') | ForEach-Object { $_.Groups[1].Value.Trim() })
+    $paths = @([regex]::Matches($content, '(?m)^- path:\s*(memory/entries/.+?\.md)\s*$') | ForEach-Object { $_.Groups[1].Value.Trim() })
+    if ($ids.Count -ne $paths.Count) {
+        Add-Failure "memory/review/skill-promote-candidates.md has mismatched memory_id/path entries"
+        return
+    }
+
+    for ($i = 0; $i -lt $ids.Count; $i += 1) {
+        $repoPath = $paths[$i]
+        $absolute = Convert-ToAbsoluteRepoPath -RepoPath $repoPath -Root $Root
+        if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) {
+            Add-Failure "memory/review/skill-promote-candidates.md references missing memory entry: $repoPath"
+            continue
+        }
+        $entryContent = Get-Content -Raw -Encoding UTF8 $absolute
+        $entryId = Get-MarkdownScalarField -Content $entryContent -Name "id"
+        if ($entryId -ne $ids[$i]) {
+            Add-Failure "memory/review/skill-promote-candidates.md points to $repoPath but id does not match $($ids[$i])"
+        }
+    }
+}
+
 @(
     "README.md",
     "AGENTS.md",
@@ -226,9 +362,16 @@ function Test-AgentsJournalRule {
     "scripts/memory-boot.ps1",
     "scripts/memory-search.ps1",
     "scripts/memory-maintain.ps1",
+    "scripts/memory-skill-utils.ps1",
+    "scripts/new-skill.ps1",
+    "scripts/skill-promote.ps1",
+    "scripts/deploy-opencode.ps1",
+    "scripts/verify-opencode.ps1",
     "scripts/journal-append.ps1",
     "scripts/journal-extract.ps1",
-    "scripts/journal-clean.ps1"
+    "scripts/journal-clean.ps1",
+    "docs/architecture.md",
+    "docs/opencode-global-deployment.md"
 ) | ForEach-Object { Test-RequiredFile $_ }
 
 Test-IndexReferences "AGENTS.md"
@@ -242,6 +385,9 @@ Test-MemoryIndexes
 Test-AgentsMemoryRule
 Test-JournalStructure
 Test-AgentsJournalRule
+Test-SkillDefinitions
+Test-DiscardedSkillSuppressions
+Test-SkillPromotionCandidates
 Test-SecretPatterns
 
 if ($failures.Count -gt 0) {

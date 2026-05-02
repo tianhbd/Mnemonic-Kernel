@@ -73,8 +73,15 @@ function Get-EntryDate {
 function New-EntryRecord {
     param([System.IO.FileInfo]$File)
     $content = Get-Content -Raw -Encoding UTF8 $File.FullName
+    $frontmatterTitle = Get-ScalarField $content "title"
     $titleMatch = [regex]::Match($content, "(?m)^#\s+(.+)$")
-    $title = if ($titleMatch.Success) { $titleMatch.Groups[1].Value.Trim() } else { $File.BaseName }
+    $title = if (-not [string]::IsNullOrWhiteSpace($frontmatterTitle)) {
+        $frontmatterTitle
+    } elseif ($titleMatch.Success) {
+        $titleMatch.Groups[1].Value.Trim()
+    } else {
+        $File.BaseName
+    }
     $created = Get-EntryDate (Get-ScalarField $content "created")
     $updated = Get-EntryDate (Get-ScalarField $content "updated")
     $hitText = Get-ScalarField $content "hit_count"

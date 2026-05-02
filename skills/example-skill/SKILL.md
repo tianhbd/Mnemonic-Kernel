@@ -1,6 +1,12 @@
 ---
 name: example-skill
 description: Example Mnemonic Kernel skill format. Use when demonstrating how to structure a reusable agent workflow.
+category: reference
+triggers:
+  - Demonstrating the required skill format
+  - Example reusable workflow
+toolsets:
+  - terminal
 ---
 
 # Example Skill

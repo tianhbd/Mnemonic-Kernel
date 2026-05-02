@@ -11,6 +11,7 @@ if ([string]::IsNullOrWhiteSpace($Root)) {
 } else {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
+. (Join-Path $scriptDir "memory-skill-utils.ps1")
 
 $journalRoot = Join-Path $Root "journal"
 $bufferRoot = Join-Path $journalRoot "buffer"
@@ -97,13 +98,6 @@ turn_count: 0
 ---
 "@
     Set-Content -LiteralPath $currentPath -Encoding UTF8 -Value $content
-}
-
-function Convert-ToRepoPath {
-    param([string]$Path)
-    $rootPath = (Resolve-Path -LiteralPath $Root).Path.TrimEnd("\")
-    $fullPath = (Resolve-Path -LiteralPath $Path).Path
-    return $fullPath.Substring($rootPath.Length + 1).Replace("\", "/")
 }
 
 function Get-MeaningfulLines {
@@ -249,9 +243,8 @@ $content
 source:
 $ExtractedRelativePath
 "@
-
     Set-Content -LiteralPath $target -Encoding UTF8 -Value $body
-    return (Convert-ToRepoPath $target)
+    return (Convert-ToRepoPath -Path $target -Root $Root)
 }
 
 if (-not (Test-Path -LiteralPath $metaPath)) {
@@ -283,14 +276,14 @@ $extractedRelative = "journal/extracted/$batchFileName"
 $lines = Get-MeaningfulLines $batchContent
 $explicitKeep = $batchContent -match "(?i)remember this|long-term memory|durable memory|\u8bb0\u4f4f\u8fd9\u4e2a|\u957f\u671f\u8bb0\u5fc6|\u6574\u7406\u6210\u957f\u671f\u8bb0\u5fc6"
 $candidates = @(Get-CategoryMatches $lines)
+$skills = @(Get-AllSkillRecords -Root $Root)
+$suppressedMatches = New-Object System.Collections.Generic.List[object]
 
 $memoryPaths = @()
 $decision = "discarded"
-$reasonLines = @(
-    "No durable preference detected",
-    "No stable environment fact detected",
-    "No reusable troubleshooting lesson detected"
-)
+$discardReason = "no_durable_value"
+$matchedSkillName = ""
+$reasonLines = @()
 
 if ($candidates.Count -gt 0 -or $explicitKeep) {
     if ($candidates.Count -eq 0 -and $explicitKeep) {
@@ -303,12 +296,32 @@ if ($candidates.Count -gt 0 -or $explicitKeep) {
         })
     }
 
+    $remainingCandidates = @()
+    foreach ($candidate in $candidates) {
+        $matchedSkill = Find-MatchingSkillForCandidate -Candidate $candidate -Skills $skills
+        if ($null -ne $matchedSkill) {
+            $suppressedMatches.Add([pscustomobject]@{
+                Candidate = $candidate
+                Skill = $matchedSkill
+            }) | Out-Null
+            continue
+        }
+        $remainingCandidates += $candidate
+    }
+
+    $candidates = @($remainingCandidates)
     foreach ($candidate in $candidates) {
         $memoryPaths += New-MemoryEntryFromJournal -Candidate $candidate -BatchId $batchId -ExtractedRelativePath $extractedRelative -Timestamp $now
     }
 
-    $summary = "Extracted $($memoryPaths.Count) durable memory entries from batch $batchId."
-    $extractedBody = @"
+    if ($memoryPaths.Count -gt 0) {
+        $summary = "Extracted $($memoryPaths.Count) durable memory entries from batch $batchId."
+        $suppressedSummary = if ($suppressedMatches.Count -gt 0) {
+            ($suppressedMatches | ForEach-Object { "- duplicated_by_skill: $($_.Skill.Name)" }) -join "`n"
+        } else {
+            "- none"
+        }
+        $extractedBody = @"
 # Extracted Journal Batch
 
 batch_id: $batchId
@@ -319,16 +332,35 @@ decision: extracted
 created_entries:
 $(($memoryPaths | ForEach-Object { "- $_" }) -join "`n")
 
+suppressed_by_skill:
+$suppressedSummary
+
 summary:
 $summary
 "@
-    Set-Content -LiteralPath $extractedPath -Encoding UTF8 -Value $extractedBody
-    if (Test-Path -LiteralPath $discardedPath) {
-        Remove-Item -LiteralPath $discardedPath -Force
+        Set-Content -LiteralPath $extractedPath -Encoding UTF8 -Value $extractedBody
+        if (Test-Path -LiteralPath $discardedPath) {
+            Remove-Item -LiteralPath $discardedPath -Force
+        }
+        & (Join-Path $scriptDir "memory-index.ps1") -Root $Root | Out-Null
+        $decision = "extracted"
+    } else {
+        $discardReason = "duplicated_by_skill"
+        if ($suppressedMatches.Count -gt 0) {
+            $matchedSkillName = $suppressedMatches[0].Skill.Name
+            $reasonLines = @($suppressedMatches | ForEach-Object { "matched skill: $($_.Skill.Name)" } | Select-Object -Unique)
+        }
     }
-    & (Join-Path $scriptDir "memory-index.ps1") -Root $Root | Out-Null
-    $decision = "extracted"
-} else {
+}
+
+if ($decision -ne "extracted") {
+    if ($reasonLines.Count -eq 0) {
+        $reasonLines = @(
+            "No durable preference detected",
+            "No stable environment fact detected",
+            "No reusable troubleshooting lesson detected"
+        )
+    }
     $discardBody = @"
 # Discarded Journal Batch
 
@@ -336,7 +368,9 @@ batch_id: $batchId
 time: $($now.ToString("yyyy-MM-dd HH:mm"))
 turn_count: $turnCount
 decision: discarded
-reason:
+reason: $discardReason
+matched_skill: $matchedSkillName
+notes:
 $(($reasonLines | ForEach-Object { "- $_" }) -join "`n")
 "@
     Set-Content -LiteralPath $discardedPath -Encoding UTF8 -Value $discardBody
@@ -358,6 +392,9 @@ $decision
 memory_created:
 $($memoryPaths.Count)
 
+suppressed_by_skill:
+$($suppressedMatches.Count)
+
 memory_paths:
 $(if ($memoryPaths.Count -gt 0) { ($memoryPaths | ForEach-Object { "- $_" }) -join "`n" } else { "- none" })
 
@@ -365,6 +402,7 @@ actions:
 - $(if ($decision -eq "extracted") { "cleared journal/buffer/current.md" } else { "discarded active buffer content" })
 - reset journal/buffer/meta.json
 - $(if ($decision -eq "extracted") { "updated memory index" } else { "no memory index update required" })
+- $(if ($suppressedMatches.Count -gt 0) { "suppressed durable memory because an existing skill already covers the same task" } else { "no skill suppression applied" })
 "@
 Set-Content -LiteralPath $reportPath -Encoding UTF8 -Value $reportBody
 
