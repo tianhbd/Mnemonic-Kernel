@@ -1,5 +1,6 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
+    [Alias('OpenCodeRoot')]
     [string]$TargetRoot = (Join-Path $env:USERPROFILE ".config\opencode"),
     [object]$Backup = $true,
     [object]$DisableConflictingMemoryPlugin = $true
@@ -47,6 +48,32 @@ function Ensure-Directory {
         if ($PSCmdlet.ShouldProcess($Path, "Create directory")) {
             New-Item -ItemType Directory -Path $Path | Out-Null
         }
+    }
+}
+
+function Invoke-PathInjection {
+    param(
+        [string]$FilePath,
+        [string]$Placeholder,
+        [string]$Replacement
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+        Write-Step "Path injection: file not found: $FilePath"
+        return
+    }
+
+    $content = Get-Content -Raw -LiteralPath $FilePath -Encoding UTF8
+    if ($content -notmatch [regex]::Escape($Placeholder)) {
+        Write-Step "Path injection: no placeholder found in $FilePath"
+        return
+    }
+
+    $newContent = $content -replace [regex]::Escape($Placeholder), $Replacement
+    if ($PSCmdlet.ShouldProcess($FilePath, "Inject path: $Placeholder -> $Replacement")) {
+        $newContent | Set-Content -LiteralPath $FilePath -Encoding UTF8 -NoNewline
+        $matchCount = ([regex]::Matches($content, [regex]::Escape($Placeholder))).Count
+        Write-Step "Path injection: replaced $matchCount occurrences in $FilePath"
     }
 }
 
@@ -194,6 +221,11 @@ if ($targetExisted) {
 }
 Ensure-Directory $TargetRoot
 
+# Path injection: replace placeholders in source AGENTS.md
+$sourceAgentsMd = Join-Path $SourceRoot "AGENTS.md"
+Invoke-PathInjection -FilePath $sourceAgentsMd -Placeholder "{{OPENCODE_GLOBAL_ROOT}}" -Replacement $TargetRoot
+
+# Copy AGENTS.md with injected paths
 Copy-FileMerge "AGENTS.md"
 Copy-FileMerge "README.md"
 Copy-DirectoryMerge "docs"

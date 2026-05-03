@@ -6,19 +6,38 @@
 
 ## 中文
 
-# Mnemonic Kernel
+# Mnemonic Kernel — 通用记忆治理框架 + OpenCode 适配器
 
-**Mnemonic Kernel** 是面向 AI Agent 的上下文治理骨架，用 `AGENTS.md`、`memory`、`skills`、`journal` 四层把长期规则、长期记忆、可复用流程和短期交互缓冲拆开。
+**Mnemonic Kernel** 是一套通用记忆治理框架，用 `AGENTS.md`、`memory`、`skills`、`journal` 四层将长期规则、长期记忆、可复用流程和短期交互缓冲拆开。它不绑定任何特定 agent runtime，通过适配器层接入具体环境。
 
-它的目标不是“让 Agent 记住更多”，而是“只保存值得保留的内容，并且只在任务需要时加载最小上下文”。
+OpenCode 适配层负责路径注入、`AGENTS.md` 规则增强和 deploy 机制，将通用治理核接入 OpenCode 全局配置目录。
+
+它的目标不是"让 Agent 记住更多"，而是"只保存值得保留的内容，并且只在任务需要时加载最小上下文"。
 
 ## 核心机制
 
+### 双模架构
+
 ```text
-AGENTS.md  = 硬规则、入口、加载边界
-memory     = 长期事实、偏好、规则、排障经验
-skills     = 可重复执行的稳定流程
-journal    = 短期交互缓冲，作为 memory 的提炼来源
+┌──────────────────────────────────────────────────────────┐
+│                  通用记忆治理框架                          │
+│                                                          │
+│  AGENTS.md  = 硬规则、入口、加载边界                       │
+│  memory     = 长期事实、偏好、规则、排障经验                │
+│  skills     = 可重复执行的稳定流程                         │
+│  journal    = 短期交互缓冲，作为 memory 的提炼来源          │
+│                                                          │
+│  通用治理核不依赖任何特定 runtime                          │
+└───────────────────────┬──────────────────────────────────┘
+                        │ 适配器层
+                        ▼
+              ┌─────────────────┐
+              │  OpenCode 适配层  │
+              │                 │
+              │  · 路径注入       │
+              │  · AGENTS.md 增强 │
+              │  · deploy 机制    │
+              └─────────────────┘
 ```
 
 - 默认只加载 `AGENTS.md`、`memory/index/default.md`、`skills/skills.md`。
@@ -26,6 +45,25 @@ journal    = 短期交互缓冲，作为 memory 的提炼来源
 - `skills/skills.md` 只是索引，具体 skill body 只在 trigger 命中后读取。
 - `journal` 默认不进上下文，只作为短期缓冲和 memory 自动提炼来源。
 - `journal-extract.ps1` 是唯一允许自动写入 durable memory 的路径。
+
+### 通用治理核
+
+四层结构在任何 agent runtime 下保持一致：
+
+| 层 | 职责 | 加载时机 |
+|---|---|---|
+| `AGENTS.md` | 硬规则、入口、加载边界 | 每次会话启动 |
+| `memory/` | 长期事实、偏好、规则、经验 | 索引命中后按需加载 |
+| `skills/` | 可复用流程、查询模板、操作顺序 | trigger 命中后按需加载 |
+| `journal/` | 短期交互缓冲 | 不进默认上下文 |
+
+### OpenCode 适配层
+
+适配层将通用治理核接入 OpenCode 运行时：
+
+- **路径注入**：deploy 脚本将 `{{OPENCODE_GLOBAL_ROOT}}` 占位符替换为实际路径（如 `C:\Users\simo\.config\opencode`）
+- **AGENTS.md 增强**：注入全局路径规则、Desktop 加载时序说明、Journal Append 细化行为
+- **Deploy 机制**：通过 `deploy-opencode.ps1` 创建备份、保留既有配置、移除冲突插件
 
 ## 常用命令
 
@@ -114,23 +152,46 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
 
 ## 边界
 
+本仓库不绑定任何特定 agent runtime。通用治理核独立运行，通过适配器层接入目标环境。当前提供 OpenCode 适配层。
+
 本仓库不负责安装 OpenCode、不配置 provider/API key、不保存 token 或私钥正文，也不替代 agent runtime。它只提供受控的 memory/journal/skill 治理面。
 
 ## English
 
-# Mnemonic Kernel
+# Mnemonic Kernel — Universal Memory Governance Framework + OpenCode Adapter
 
-**Mnemonic Kernel** is a governance skeleton for AI-agent context, durable memory, reusable skills, and short-term interaction buffering.
+**Mnemonic Kernel** is a universal memory governance framework that separates durable rules, long-term memory, reusable workflows, and short-term interaction buffering into four layers: `AGENTS.md`, `memory`, `skills`, and `journal`. It is runtime-agnostic and connects to specific environments through an adapter layer.
+
+The OpenCode adapter handles path injection, `AGENTS.md` rule enhancement, and the deploy mechanism, bridging the universal governance core into OpenCode's global configuration directory.
 
 It does not try to remember more. It persists only durable content and loads only the minimum context required for the current task.
 
 ## Core Model
 
+### Dual-Mode Architecture
+
 ```text
-AGENTS.md  = hard rules, entrypoints, loading boundaries
-memory     = durable facts, preferences, rules, troubleshooting lessons
-skills     = repeatable stable workflows
-journal    = short-term interaction buffer used for memory extraction
+┌──────────────────────────────────────────────────────────┐
+│            Universal Memory Governance Framework          │
+│                                                          │
+│  AGENTS.md  = hard rules, entrypoints, loading boundaries│
+│  memory     = durable facts, preferences, rules, lessons  │
+│  skills     = repeatable stable workflows                 │
+│  journal    = short-term interaction buffer for extraction│
+│                                                          │
+│  The governance core does not depend on any runtime       │
+└───────────────────────┬──────────────────────────────────┘
+                        │ adapter layer
+                        ▼
+              ┌─────────────────┐
+              │  OpenCode Adapter│
+              │                 │
+              │  · path injection│
+              │  · AGENTS.md     │
+              │    enhancement   │
+              │  · deploy        │
+              │    mechanism     │
+              └─────────────────┘
 ```
 
 - Default loading is limited to `AGENTS.md`, `memory/index/default.md`, and `skills/skills.md`.
@@ -138,6 +199,25 @@ journal    = short-term interaction buffer used for memory extraction
 - `skills/skills.md` is an index only; skill bodies are loaded only after trigger matches.
 - `journal` is not default context. It only feeds durable memory extraction.
 - `journal-extract.ps1` is the only automatic durable-memory write path.
+
+### Universal Governance Core
+
+The four-layer structure remains consistent across any agent runtime:
+
+| Layer | Responsibility | Loaded When |
+|---|---|---|
+| `AGENTS.md` | Hard rules, entrypoints, loading boundaries | Every session start |
+| `memory/` | Durable facts, preferences, rules, experience | On-demand after index match |
+| `skills/` | Reusable workflows, query templates, operating sequences | On-demand after trigger match |
+| `journal/` | Short-term interaction buffer | Never in default context |
+
+### OpenCode Adapter Layer
+
+The adapter bridges the universal governance core into OpenCode runtime:
+
+- **Path Injection**: Deploy scripts replace `{{OPENCODE_GLOBAL_ROOT}}` placeholders with actual paths (e.g. `C:\Users\simo\.config\opencode`)
+- **AGENTS.md Enhancement**: Injects global path rules, Desktop loading timing, and Journal Append behavior refinement
+- **Deploy Mechanism**: `deploy-opencode.ps1` creates backups, preserves existing configuration, and removes conflicting plugins
 
 ## Common Commands
 
@@ -225,5 +305,7 @@ Validated outcomes:
 - `scripts/check.ps1` validates that promoted memory is gone, indexes no longer reference deleted paths, and discarded records point to a real skill.
 
 ## Boundary
+
+This framework is runtime-agnostic. The universal governance core operates independently, connecting to target environments through an adapter layer. An OpenCode adapter is currently provided.
 
 This repository does not install OpenCode, configure providers or API keys, store tokens or private key bodies, or replace the agent runtime. It provides a controlled memory/journal/skill governance surface.

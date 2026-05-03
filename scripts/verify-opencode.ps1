@@ -123,6 +123,58 @@ function Test-PluginConfig {
     }
 }
 
+function Test-PathInjection {
+    $agentsPath = Join-Path $TargetRoot "AGENTS.md"
+    if (-not (Test-Path -LiteralPath $agentsPath -PathType Leaf)) {
+        Add-Failure "AGENTS.md not found at target: $agentsPath"
+        return
+    }
+
+    $content = Get-Content -Raw -Encoding UTF8 $agentsPath
+
+    # Check for unresolved placeholders like {{OPENCODE_GLOBAL_ROOT}}
+    $placeholders = [regex]::Matches($content, '\{\{[A-Z_]+\}\}')
+    if ($placeholders.Count -gt 0) {
+        $placeholderNames = $placeholders | ForEach-Object { $_.Value } | Sort-Object -Unique
+        Add-Failure "AGENTS.md contains unresolved placeholders: $($placeholderNames -join ', ')"
+        Write-Step "Path injection FAILED: found $($placeholders.Count) unresolved placeholder(s)"
+    } else {
+        Write-Step "Path injection verified: no unresolved placeholders in AGENTS.md"
+    }
+}
+
+function Test-NarrativeConsistency {
+    $readmePath = Join-Path $TargetRoot "README.md"
+    if (-not (Test-Path -LiteralPath $readmePath -PathType Leaf)) {
+        Add-Failure "README.md not found at target: $readmePath"
+        return
+    }
+
+    $content = Get-Content -Raw -Encoding UTF8 $readmePath
+
+    $oldNarratives = @(
+        'standalone governance skeleton',
+        'standalone agent governance'
+    )
+
+    $foundOld = $false
+    foreach ($old in $oldNarratives) {
+        if ($content -match [regex]::Escape($old)) {
+            Add-Failure "README.md still contains old narrative: '$old'"
+            $foundOld = $true
+        }
+    }
+
+    if (-not $foundOld) {
+        Write-Step "Narrative consistency verified: no old narrative found in README.md"
+    }
+
+    # Check for dual-mode architecture mention
+    if ($content -notmatch 'dual.mode' -and $content -notmatch 'adapter' -and $content -notmatch '\u9002\u914d\u5668') {
+        Add-Failure "README.md does not mention dual-mode architecture or adapter layer"
+    }
+}
+
 if (-not (Test-Path -LiteralPath $TargetRoot -PathType Container)) {
     throw "TargetRoot not found: $TargetRoot"
 }
@@ -147,6 +199,8 @@ foreach ($file in @(
 
 Test-LoadingBoundaries
 Test-PluginConfig
+Test-PathInjection
+Test-NarrativeConsistency
 
 $check = Join-Path $TargetRoot "scripts\check.ps1"
 if (Test-Path -LiteralPath $check -PathType Leaf) {

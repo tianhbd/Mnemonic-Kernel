@@ -8,6 +8,72 @@ Default target:
 C:\Users\simo\.config\opencode
 ```
 
+## 双模架构概述 (Dual-Mode Architecture)
+
+Mnemonic Kernel 是通用记忆治理框架，不绑定任何特定 agent runtime。它通过适配器层接入具体环境。当前提供 OpenCode 适配器。
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│            通用记忆治理框架 (Universal Governance Core)    │
+│                                                          │
+│  AGENTS.md  = 硬规则、入口、加载边界                       │
+│  memory     = 长期事实、偏好、规则、排障经验                │
+│  skills     = 可重复执行的稳定流程                         │
+│  journal    = 短期交互缓冲，作为 memory 的提炼来源          │
+│                                                          │
+│  通用治理核不依赖任何特定 runtime                          │
+└───────────────────────┬──────────────────────────────────┘
+                        │ 适配器层 (Adapter Layer)
+                        ▼
+              ┌─────────────────┐
+              │  OpenCode 适配层  │
+              │                 │
+              │  · 路径注入       │
+              │  · AGENTS.md 增强 │
+              │  · deploy 机制    │
+              └─────────────────┘
+```
+
+The universal governance core is runtime-agnostic. The OpenCode adapter handles three things:
+- **Path Injection**: Replaces `{{OPENCODE_GLOBAL_ROOT}}` placeholders with actual runtime paths
+- **AGENTS.md Enhancement**: Injects global path rules, Desktop loading timing, and Journal Append behavior refinement
+- **Deploy Mechanism**: `deploy-opencode.ps1` creates backups, preserves existing configuration, and removes conflicting plugins
+
+## 路径注入机制 (Path Injection)
+
+项目版 `AGENTS.md` 中使用 `{{OPENCODE_GLOBAL_ROOT}}` 占位符代替硬编码路径。这使得同一份 `AGENTS.md` 既能作为项目内文档使用，又能通过 deploy 脚本注入实际路径后部署到任意 OpenCode 全局目录。
+
+### 占位符位置 (Placeholder Locations)
+
+`AGENTS.md` 中所有涉及全局路径的位置使用 `{{OPENCODE_GLOBAL_ROOT}}`：
+
+```text
+{{OPENCODE_GLOBAL_ROOT}}
+{{OPENCODE_GLOBAL_ROOT}}\scripts
+{{OPENCODE_GLOBAL_ROOT}}\scripts\memory-boot.ps1
+{{OPENCODE_GLOBAL_ROOT}}\scripts\journal-append.ps1
+{{OPENCODE_GLOBAL_ROOT}}\scripts\journal-extract.ps1
+{{OPENCODE_GLOBAL_ROOT}}\scripts\memory-index.ps1
+```
+
+### 注入流程 (Injection Flow)
+
+1. 项目仓库中 `AGENTS.md` 保留 `{{OPENCODE_GLOBAL_ROOT}}` 占位符
+2. 运行 `deploy-opencode.ps1` 时，脚本将占位符替换为 `-TargetRoot` 指定的实际路径
+3. 替换后的 `AGENTS.md` 写入目标目录，不再包含占位符
+4. 后续 `verify-opencode.ps1` 检查部署后的文件不含残留占位符
+
+### 参数说明 (Parameters)
+
+| 参数 | 说明 | 默认值 |
+|---|---|---|
+| `-TargetRoot` | OpenCode 全局配置目录路径 | `$env:USERPROFILE\.config\opencode` |
+| `-WhatIf` | 预演模式，只列出操作不执行 | 不启用 |
+| `-Backup` | 是否创建备份 | `true` |
+| `-DisableConflictingMemoryPlugin` | 是否移除冲突插件 | `true` |
+
+`-TargetRoot` 既指定部署目标目录，也作为路径注入的替换值。例如 `-TargetRoot "D:\custom\opencode"` 会将所有 `{{OPENCODE_GLOBAL_ROOT}}` 替换为 `D:\custom\opencode`。
+
 ## Deployment Command
 
 ```powershell

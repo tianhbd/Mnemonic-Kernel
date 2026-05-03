@@ -12,12 +12,19 @@ param(
     [string]$PromotedFromMemoryPath = "",
     [int]$PromotedFromMemoryHitCount = 0,
     [string]$PromotedAt = "",
+    [string]$Scope = "project",
+    [string]$ScopeOverridden = "false",
+    [string]$OverriddenTo = "",
     [switch]$Confirmed,
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "memory-skill-utils.ps1")
+
+if ($Scope -notin @("project", "global")) {
+    throw "Invalid scope value: $Scope. Must be 'project' or 'global'."
+}
 
 if (-not $Confirmed) {
     throw "Refusing to create skill without explicit -Confirmed."
@@ -76,6 +83,14 @@ promoted_from_memory:
   promoted_at: $PromotedAt
 "@
 }
+$scopeBlock = @"
+scope:
+  value: $Scope
+  overridden: $ScopeOverridden
+"@
+if (-not [string]::IsNullOrWhiteSpace($OverriddenTo)) {
+    $scopeBlock += "`n  overridden_to: $OverriddenTo"
+}
 
 New-Item -ItemType Directory -Path $skillDir | Out-Null
 $body = @"
@@ -88,6 +103,7 @@ $triggerBlock
 toolsets:
 $toolsetBlock
 $promotedBlock
+$scopeBlock
 ---
 
 # $Name

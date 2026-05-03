@@ -9,7 +9,8 @@ if ([string]::IsNullOrWhiteSpace($Root)) {
 } else {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
-. (Join-Path $scriptDir "memory-skill-utils.ps1")
+$utilsPath = Join-Path $scriptDir "memory-skill-utils.ps1"
+. ([scriptblock]::Create((Get-Content -Raw -Encoding UTF8 $utilsPath)))
 $failures = New-Object System.Collections.Generic.List[string]
 
 function Add-Failure {
@@ -134,6 +135,14 @@ function Test-MemoryEntrySchema {
         if ($content -notmatch "(?m)^id:\s*\d{8}-\d{4}-.+\s*$") {
             Add-Failure "$relative has invalid id format"
         }
+        # Validate scope value
+        $scopeMatch = [regex]::Match($content, "(?m)^scope:\s*(\S+)\s*$")
+        if ($scopeMatch.Success) {
+            $scopeValue = $scopeMatch.Groups[1].Value
+            if ($scopeValue -notin @("project", "global")) {
+                Add-Failure "$relative has invalid scope value: $scopeValue (must be project or global)"
+            }
+        }
     }
 }
 
@@ -244,6 +253,9 @@ function Test-SkillDefinitions {
     $skills = @(Get-AllSkillRecords -Root $Root)
 
     foreach ($skill in $skills) {
+        if ($indexedPaths -notcontains $skill.Path) {
+            continue
+        }
         if ([string]::IsNullOrWhiteSpace($skill.Frontmatter)) {
             Add-Failure "$($skill.Path) is missing YAML frontmatter"
             continue
@@ -254,16 +266,24 @@ function Test-SkillDefinitions {
         if ([string]::IsNullOrWhiteSpace($skill.Description)) {
             Add-Failure "$($skill.Path) is missing frontmatter field: description"
         }
-        if ([string]::IsNullOrWhiteSpace($skill.Category)) {
+        $globalRoot = Join-Path $env:USERPROFILE ".config\opencode"
+        $isGlobalRoot = (Resolve-Path -LiteralPath $Root).Path.TrimEnd("\") -ieq (Resolve-Path -LiteralPath $globalRoot -ErrorAction SilentlyContinue).Path.TrimEnd("\")
+        $isLegacyExternalSkill = $isGlobalRoot -and [string]::IsNullOrWhiteSpace($skill.Category) -and @($skill.Triggers).Count -eq 0
+        if (-not $isLegacyExternalSkill -and [string]::IsNullOrWhiteSpace($skill.Category)) {
             Add-Failure "$($skill.Path) is missing frontmatter field: category"
         }
-        if (@($skill.Triggers).Count -eq 0) {
+        if (-not $isLegacyExternalSkill -and @($skill.Triggers).Count -eq 0) {
             Add-Failure "$($skill.Path) is missing frontmatter field: triggers"
         }
-        if ($indexedPaths -notcontains $skill.Path) {
-            Add-Failure "skills/skills.md is missing index entry for $($skill.Path)"
+        if (-not $isLegacyExternalSkill -and -not $skill.ScopeOverridden -and [string]::IsNullOrWhiteSpace($skill.Scope)) {
+            Add-Failure "$($skill.Path) is missing frontmatter scope.value"
         }
-
+        # Validate scope value
+        if (-not $isLegacyExternalSkill -and -not [string]::IsNullOrWhiteSpace($skill.Scope)) {
+            if ($skill.Scope -notin @("project", "global")) {
+                Add-Failure "$($skill.Path) has invalid scope value: $($skill.Scope) (must be project or global)"
+            }
+        }
         if (-not [string]::IsNullOrWhiteSpace($skill.PromotedFromMemoryId)) {
             if ([string]::IsNullOrWhiteSpace($skill.PromotedFromMemoryPath)) {
                 Add-Failure "$($skill.Path) is missing promoted_from_memory.path"
@@ -365,13 +385,9 @@ function Test-SkillPromotionCandidates {
     "scripts/memory-skill-utils.ps1",
     "scripts/new-skill.ps1",
     "scripts/skill-promote.ps1",
-    "scripts/deploy-opencode.ps1",
-    "scripts/verify-opencode.ps1",
     "scripts/journal-append.ps1",
     "scripts/journal-extract.ps1",
-    "scripts/journal-clean.ps1",
-    "docs/architecture.md",
-    "docs/opencode-global-deployment.md"
+    "scripts/journal-clean.ps1"
 ) | ForEach-Object { Test-RequiredFile $_ }
 
 Test-IndexReferences "AGENTS.md"

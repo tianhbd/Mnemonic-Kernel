@@ -2,7 +2,8 @@ param(
     [string]$Root = "",
     [int]$HitThreshold = 5,
     [string]$MemoryId = "",
-    [switch]$Confirmed
+    [switch]$Confirmed,
+    [string]$Scope = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,10 @@ if ([string]::IsNullOrWhiteSpace($Root)) {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 . (Join-Path $scriptDir "memory-skill-utils.ps1")
+
+if (-not [string]::IsNullOrWhiteSpace($Scope) -and $Scope -notin @("project", "global")) {
+    throw "Invalid scope value: $Scope. Must be 'project' or 'global'."
+}
 
 $reviewRoot = Join-Path $Root "memory/review"
 $reportRoot = Join-Path $Root "memory/reports"
@@ -94,6 +99,9 @@ $promotedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm")
     -PromotedFromMemoryPath $entry.Path `
     -PromotedFromMemoryHitCount $entry.HitCount `
     -PromotedAt $promotedAt `
+    -Scope $(if (-not [string]::IsNullOrWhiteSpace($Scope)) { $Scope } elseif (-not [string]::IsNullOrWhiteSpace($entry.Scope)) { $entry.Scope } else { "project" }) `
+    -ScopeOverridden $(((-not [string]::IsNullOrWhiteSpace($Scope)) -and ($Scope -ne $entry.Scope)).ToString().ToLowerInvariant()) `
+    -OverriddenTo $(if (($Scope -ne $entry.Scope) -and (-not [string]::IsNullOrWhiteSpace($Scope))) { $Scope } else { "" }) `
     -Confirmed `
     -Root $Root | Out-Null
 
@@ -109,6 +117,7 @@ memory_id: $($entry.Id)
 memory_path: $($entry.Path)
 deleted_memory: true
 skill_name: $($recommendation.Name)
+skill_scope: $(if (-not [string]::IsNullOrWhiteSpace($Scope)) { $Scope } elseif (-not [string]::IsNullOrWhiteSpace($entry.Scope)) { $entry.Scope } else { "project" })
 skill_path: $skillPath
 hit_count: $($entry.HitCount)
 reason: $($recommendation.Reason)

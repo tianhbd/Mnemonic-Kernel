@@ -76,6 +76,7 @@ if ($promotableEntries.Count -eq 0) {
         $promotable.Add("- hit_count: $($entry.HitCount)") | Out-Null
         $promotable.Add("- last_hit: $($entry.LastHit)") | Out-Null
         $promotable.Add("- trigger: $($entry.Trigger -join '; ')") | Out-Null
+        $promotable.Add("- scope: $($entry.Scope)") | Out-Null
         $promotable.Add("- summary: $($entry.Summary)") | Out-Null
         $promotable.Add("- suggested_skill_name: $($recommendation.Name)") | Out-Null
         $promotable.Add("- promotion_reason: $($recommendation.Reason)") | Out-Null

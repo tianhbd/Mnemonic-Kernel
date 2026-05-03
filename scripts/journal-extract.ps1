@@ -192,7 +192,8 @@ function New-MemoryEntryFromJournal {
         [object]$Candidate,
         [string]$BatchId,
         [string]$ExtractedRelativePath,
-        [datetime]$Timestamp
+        [datetime]$Timestamp,
+        [string]$Scope = "project"
     )
 
     $dateDirName = $Timestamp.ToString("yyyy-MM-dd")
@@ -223,7 +224,7 @@ function New-MemoryEntryFromJournal {
 id: $id
 created: $($Timestamp.ToString("yyyy-MM-dd HH:mm"))
 updated: $($Timestamp.ToString("yyyy-MM-dd HH:mm"))
-scope: project
+scope: $Scope
 type: $($Candidate.Type)
 status: active
 risk: low
@@ -280,6 +281,7 @@ $skills = @(Get-AllSkillRecords -Root $Root)
 $suppressedMatches = New-Object System.Collections.Generic.List[object]
 
 $memoryPaths = @()
+$scopeDeterminations = @()
 $decision = "discarded"
 $discardReason = "no_durable_value"
 $matchedSkillName = ""
@@ -310,8 +312,58 @@ if ($candidates.Count -gt 0 -or $explicitKeep) {
     }
 
     $candidates = @($remainingCandidates)
+    $uncertainRecords = @()
     foreach ($candidate in $candidates) {
-        $memoryPaths += New-MemoryEntryFromJournal -Candidate $candidate -BatchId $batchId -ExtractedRelativePath $extractedRelative -Timestamp $now
+        $scopeEvidence = Get-ScopeEvidence -Lines $candidate.Lines
+        $memScope = $scopeEvidence.Scope
+        $memPath = New-MemoryEntryFromJournal -Candidate $candidate -BatchId $batchId -ExtractedRelativePath $extractedRelative -Timestamp $now -Scope $memScope
+        $memoryPaths += $memPath
+
+        $scopeDeterminations += [pscustomobject]@{
+            Title = $candidate.Title
+            Scope = $memScope
+            Certain = $scopeEvidence.Certain
+            GlobalScore = $scopeEvidence.GlobalScore
+            ProjectScore = $scopeEvidence.ProjectScore
+            Reason = $scopeEvidence.Reason
+            MemoryPath = $memPath
+        }
+
+        if ($scopeEvidence.Certain -eq $false) {
+            $uncertainRecords += [pscustomobject]@{
+                MemoryPath = $memPath
+                Title = $candidate.Title
+                GlobalScore = $scopeEvidence.GlobalScore
+                ProjectScore = $scopeEvidence.ProjectScore
+            }
+        }
+    }
+
+    # Append uncertain scope entries to scope-uncertain.md
+    if ($uncertainRecords.Count -gt 0) {
+        $scopeUncertainPath = Join-Path $Root "memory/review/scope-uncertain.md"
+        $reviewDir = Split-Path -Parent $scopeUncertainPath
+        if (-not (Test-Path -LiteralPath $reviewDir)) {
+            New-Item -ItemType Directory -Path $reviewDir | Out-Null
+        }
+        $appendContent = ""
+        foreach ($unc in $uncertainRecords) {
+            $fileName = [System.IO.Path]::GetFileNameWithoutExtension($unc.MemoryPath)
+            $slug = $fileName.Substring(5) # remove time token
+            $diff = [Math]::Abs($unc.GlobalScore - $unc.ProjectScore)
+            $appendContent += "`n- ID: $slug`n"
+            $appendContent += "  Date: $($now.ToString('yyyy-MM-dd'))`n"
+            $appendContent += "  Summary: $($unc.Title)`n"
+            $appendContent += "  Detected_Score: global=$($unc.GlobalScore) project=$($unc.ProjectScore) (diff=$diff)`n"
+            $appendContent += "  Default_Scope: project`n"
+            $appendContent += "  Status: pending_review`n"
+        }
+        if (Test-Path -LiteralPath $scopeUncertainPath) {
+            $appendContent | Add-Content -LiteralPath $scopeUncertainPath -Encoding UTF8
+        } else {
+            $header = "# Scope Uncertain Entries`n`nEntries where scope could not be confidently determined (score difference < 2).`n`n## Pending Review"
+            $header + $appendContent | Set-Content -LiteralPath $scopeUncertainPath -Encoding UTF8
+        }
     }
 
     if ($memoryPaths.Count -gt 0) {
@@ -397,6 +449,9 @@ $($suppressedMatches.Count)
 
 memory_paths:
 $(if ($memoryPaths.Count -gt 0) { ($memoryPaths | ForEach-Object { "- $_" }) -join "`n" } else { "- none" })
+
+scope_determinations:
+$(if ($scopeDeterminations.Count -gt 0) { ($scopeDeterminations | ForEach-Object { "- title: $($_.Title); scope: $($_.Scope); certain: $($_.Certain); global_score: $($_.GlobalScore); project_score: $($_.ProjectScore); reason: $($_.Reason)" }) -join "`n" } else { "- none" })
 
 actions:
 - $(if ($decision -eq "extracted") { "cleared journal/buffer/current.md" } else { "discarded active buffer content" })

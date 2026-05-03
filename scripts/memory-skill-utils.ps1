@@ -402,6 +402,7 @@ function Get-SkillRecommendationForMemory {
         Name = $name
         Slug = $slug
         Category = $category
+        Scope = $Record.Scope
         Triggers = $triggers
         Workflow = $workflow.Trim()
         Verification = $verification
@@ -423,6 +424,9 @@ function Get-SkillRecord {
         Name = Get-FrontmatterScalar $content "name"
         Description = Get-FrontmatterScalar $content "description"
         Category = Get-FrontmatterScalar $content "category"
+        Scope = Get-FrontmatterNestedScalar $content "scope" "value"
+        ScopeOverridden = (Get-FrontmatterNestedScalar $content "scope" "overridden") -eq "true"
+        OverriddenTo = Get-FrontmatterNestedScalar $content "scope" "overridden_to"
         Triggers = @(Get-FrontmatterList $content "triggers")
         Toolsets = @(Get-FrontmatterList $content "toolsets")
         Path = Convert-ToRepoPath -Path $File.FullName -Root $Root
@@ -495,4 +499,112 @@ function Find-MatchingSkillForCandidate {
         return $best
     }
     return $null
+}
+
+function Get-ScopeEvidence {
+    param(
+        [string[]]$Lines,
+        [string]$CurrentRepoName = "",
+        [string]$ExplicitScope = ""
+    )
+
+    # 1. Explicit specification (strongest signal)
+    if ($ExplicitScope -in @("global", "project")) {
+        return [pscustomobject]@{
+            Scope          = $ExplicitScope
+            GlobalScore    = if ($ExplicitScope -eq "global") { 99 } else { 0 }
+            ProjectScore   = if ($ExplicitScope -eq "project") { 99 } else { 0 }
+            Certain        = $true
+            Reason         = "explicitly_specified"
+        }
+    }
+
+    $globalScore = 0
+    $projectScore = 0
+    $reasons = New-Object System.Collections.Generic.List[string]
+
+    $combined = ($Lines -join " ") -replace "\s+", " "
+
+    # 2. Path/Repo ownership detection
+    $globalPathPatterns = @(
+        "\\\.config\\\\opencode",
+        "\.config[/\\]opencode",
+        "global config",
+        "全局配置", "系统级配置", "所有项目", "跨项目"
+    )
+
+    $projectPathPatterns = @(
+        "src/", "lib/", "scripts/", "config/", "tests/", "\.git/"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($CurrentRepoName)) {
+        $projectPathPatterns = @([regex]::Escape($CurrentRepoName)) + $projectPathPatterns
+    }
+    $projectPathPatterns += @("项目路径", "项目文件", "项目脚本", "项目配置", "当前项目", "这个项目", "本项目")
+
+    foreach ($pattern in $globalPathPatterns) {
+        if ($combined -match $pattern) {
+            $globalScore += 2
+            $reasons.Add("path_global: $pattern") | Out-Null
+            break
+        }
+    }
+
+    foreach ($pattern in $projectPathPatterns) {
+        if ($combined -match $pattern) {
+            $projectScore += 2
+            $reasons.Add("path_project: $pattern") | Out-Null
+            break
+        }
+    }
+
+    # 3. Keyword detection
+    $globalKeywords = @(
+        "用户偏好", "user preference", "内网设备", "internal device",
+        "通用工具", "general tool", "通用规则", "跨项目", "cross-project", "cross project",
+        "所有项目", "all projects", "全局", "global", "语言偏好", "language preference"
+    )
+
+    $projectKeywords = @(
+        "项目bug", "project bug", "项目命令", "project command",
+        "项目架构", "project architecture", "项目流程", "project workflow",
+        "项目规则", "project rule", "当前项目", "this project",
+        "本项目", "这个项目", "项目排障", "project troubleshooting"
+    )
+
+    foreach ($kw in $globalKeywords) {
+        if ($combined -match [regex]::Escape($kw)) {
+            $globalScore += 1
+            $reasons.Add("keyword_global: $kw") | Out-Null
+        }
+    }
+
+    foreach ($kw in $projectKeywords) {
+        if ($combined -match [regex]::Escape($kw)) {
+            $projectScore += 1
+            $reasons.Add("keyword_project: $kw") | Out-Null
+        }
+    }
+
+    # 4. Decision
+    $diff = [Math]::Abs($globalScore - $projectScore)
+    if ($diff -ge 2) {
+        $scope = if ($globalScore -gt $projectScore) { "global" } else { "project" }
+        return [pscustomobject]@{
+            Scope      = $scope
+            GlobalScore = $globalScore
+            ProjectScore = $projectScore
+            Certain    = $true
+            Reason     = ($reasons -join "; ")
+        }
+    }
+
+    # 5. Uncertain - default to project
+    return [pscustomobject]@{
+        Scope        = "project"
+        GlobalScore  = $globalScore
+        ProjectScore = $projectScore
+        Certain      = $false
+        Reason       = "uncertain (diff=$diff, defaulted to project)"
+    }
 }

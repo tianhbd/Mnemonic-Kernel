@@ -7,6 +7,9 @@ triggers:
   - Example reusable workflow
 toolsets:
   - terminal
+scope:
+  value: project
+  overridden: false
 ---
 
 # Example Skill

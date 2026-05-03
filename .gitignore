@@ -1,0 +1,22 @@
+# Mnemonic Kernel - Git Ignore
+
+## Sisyphus / Assistant Workspace
+.sisyphus/
+
+## Backup directories
+.backup/
+
+## OS files
+.DS_Store
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+
+## PowerShell transcript
+*.ps1transcript
+
+## VS Code / IDE
+.vscode/
+.idea/
