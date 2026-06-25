@@ -20,3 +20,18 @@ Desktop.ini
 ## VS Code / IDE
 .vscode/
 .idea/
+
+## Node / npm
+node_modules/
+npm-debug.log*
+
+## Logs
+*.log
+
+## Temp files
+tmp/
+*.tmp
+
+## Coverage reports
+coverage/
+.output/

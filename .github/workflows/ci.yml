@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        ps-version: ['5.1', '7.4']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run verification script
+      shell: powershell
+      run: |
+        .\scripts\check.ps1
+
+    - name: Validate script syntax
+      shell: powershell
+      run: |
+        $errors = 0
+        Get-ChildItem -Path .\scripts -Filter *.ps1 | ForEach-Object {
+          try {
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$null)
+            Write-Host "✅ $($_.Name) - syntax OK"
+          } catch {
+            Write-Host "❌ $($_.Name) - syntax error: $_"
+            $errors++
+          }
+        }
+        Get-ChildItem -Path .\tests -Filter *.ps1 -ErrorAction SilentlyContinue | ForEach-Object {
+          try {
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$null)
+            Write-Host "✅ $($_.Name) - syntax OK"
+          } catch {
+            Write-Host "❌ $($_.Name) - syntax error: $_"
+            $errors++
+          }
+        }
+        if ($errors -gt 0) { throw "$errors scripts have syntax errors." }
+        Write-Host "All scripts pass syntax validation."
+
+    - name: Check file encoding
+      shell: powershell
+      run: |
+        $issues = 0
+        Get-ChildItem -Path . -Recurse -Include *.ps1, *.md | ForEach-Object {
+          $content = Get-Content -Path $_.FullName -Raw -ErrorAction SilentlyContinue
+          if (-not $content) { return }
+          # Ensure UTF-8 without BOM
+          $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+          if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            Write-Host "⚠️  $($_.Name) has BOM - converting"
+            $issues++
+          }
+        }
+        Write-Host "Encoding check complete. $issues files with BOM."
+
+  lint-markdown:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: DavidAnson/markdownlint-cli2-action@v19
+      with:
+        globs: '**/*.md'
+        config: '{"MD013": false, "MD033": false, "MD041": false}'

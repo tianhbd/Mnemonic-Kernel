@@ -8,6 +8,15 @@
 
 # Mnemonic Kernel — 通用记忆治理框架 + OpenCode 适配器
 
+<div align="center">
+
+![CI](https://img.shields.io/github/actions/workflow/status/tianhbd/Mnemonic-Kernel/ci.yml?branch=main&label=CI)
+![License](https://img.shields.io/github/license/tianhbd/Mnemonic-Kernel?color=blue)
+![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207.4-blue?logo=powershell)
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+
+</div>
+
 **Mnemonic Kernel** 是一套通用记忆治理框架，用 `AGENTS.md`、`memory`、`skills`、`journal` 四层将长期规则、长期记忆、可复用流程和短期交互缓冲拆开。它不绑定任何特定 agent runtime，通过适配器层接入具体环境。
 
 OpenCode 适配层负责路径注入、`AGENTS.md` 规则增强和 deploy 机制，将通用治理核接入 OpenCode 全局配置目录。
@@ -160,11 +169,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
 
 # Mnemonic Kernel — Universal Memory Governance Framework + OpenCode Adapter
 
+<div align="center">
+
+![CI](https://img.shields.io/github/actions/workflow/status/tianhbd/Mnemonic-Kernel/ci.yml?branch=main&label=CI)
+![License](https://img.shields.io/github/license/tianhbd/Mnemonic-Kernel?color=blue)
+![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207.4-blue?logo=powershell)
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![GitHub last commit](https://img.shields.io/github/last-commit/tianhbd/Mnemonic-Kernel)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/tianhbd/Mnemonic-Kernel)
+
+</div>
+
 **Mnemonic Kernel** is a universal memory governance framework that separates durable rules, long-term memory, reusable workflows, and short-term interaction buffering into four layers: `AGENTS.md`, `memory`, `skills`, and `journal`. It is runtime-agnostic and connects to specific environments through an adapter layer.
 
 The OpenCode adapter handles path injection, `AGENTS.md` rule enhancement, and the deploy mechanism, bridging the universal governance core into OpenCode's global configuration directory.
 
 It does not try to remember more. It persists only durable content and loads only the minimum context required for the current task.
+
+## Quick Start
+
+```powershell
+# Clone the repository
+git clone https://github.com/tianhbd/Mnemonic-Kernel.git
+cd Mnemonic-Kernel
+
+# Run the verification check
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+
+# Deploy to OpenCode (optional, requires OpenCode installed)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy-opencode.ps1
+```
+
+See [Installation Guide](docs/installation.md) for system requirements and detailed setup.
 
 ## Core Model
 
